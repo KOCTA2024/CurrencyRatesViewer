@@ -340,7 +340,7 @@ class App(object):
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%d-%m-%Y"))
         ax.xaxis.set_major_locator(mdates.AutoDateLocator())
         self.figure.autofmt_xdate()
-
+        self.label.setText("Графiк побудовано.")
         self.canvas.draw()
     def on_predict_button_clicked(self):
 
