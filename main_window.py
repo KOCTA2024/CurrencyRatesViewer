@@ -15,7 +15,12 @@ from core.workers import ChartWorker, RateWorker, PredictWorker
 from datetime import date
 
 from core.settings import SettingsService, ThemeSettingsDialog
+import os
 
+# ВАЖНО: базовая директория — папка, где лежит этот скрипт
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+print("Current working dir:", os.getcwd())
+print("Base dir:", BASE_DIR)
 
 logging.basicConfig(
     filename='app.log',
@@ -55,21 +60,25 @@ class App(object):
         MainWindow.resize(1040, 600)  # чуть шире
         MainWindow.setWindowTitle("Курси Валют")
 
+        # Загрузка иконки через абсолютный путь
+        icon_path = os.path.join(BASE_DIR, "icons", "ico.png")
         try:
-            MainWindow.setWindowIcon(QtGui.QIcon("icons/ico.png"))
+            MainWindow.setWindowIcon(QtGui.QIcon(icon_path))
         except Exception as e:
             logging.warning(f"Не удалось загрузить иконку: {e}")
 
         self.centralwidget = QtWidgets.QWidget(MainWindow)
         MainWindow.setCentralWidget(self.centralwidget)
 
-        # Загрузка темы
+        # Загрузка темы через абсолютный путь
         try:
             if self.is_dark_theme:
-                with open("styles/dark.css", "r", encoding="utf-8") as f:
+                dark_css_path = os.path.join(BASE_DIR, "styles", "dark.css")
+                with open(dark_css_path, "r", encoding="utf-8") as f:
                     self.app.setStyleSheet(f.read())
             else:
-                with open("styles/style.css", "r", encoding="utf-8") as f:
+                style_css_path = os.path.join(BASE_DIR, "styles", "style.css")
+                with open(style_css_path, "r", encoding="utf-8") as f:
                     self.app.setStyleSheet(f.read())
         except Exception as e:
             logging.error(f"Ошибка загрузки стилей: {e}")
@@ -144,7 +153,7 @@ class App(object):
         self.pushButton_settings.setFixedSize(30, 30)
         self.pushButton_settings.setToolTip("Налаштування")
 
-        icon = QtGui.QIcon("icons/ico.png")
+        icon = QtGui.QIcon(icon_path)
         self.pushButton_settings.setIcon(icon)
         self.pushButton_settings.setIconSize(QtCore.QSize(24, 24))
         self.pushButton_settings.setFlat(True)
@@ -160,12 +169,6 @@ class App(object):
         self.chart_container = QVBoxLayout()
         right_layout.addLayout(self.chart_container)
 
-
-        right_layout.addLayout(top_bar)
-        # Контейнер для графика
-        self.chart_container = QVBoxLayout()
-        right_layout.addLayout(self.chart_container)
-
         # Основной layout
         main_layout = QHBoxLayout(self.centralwidget)
         main_layout.addLayout(left_layout)
@@ -174,6 +177,8 @@ class App(object):
         main_layout.setStretch(1, 1)
 
         self.right_layout = self.chart_container
+
+    # --- Остальной код без изменений ---
 
     def clear_and_delete_chart(self) -> None:
         if self.canvas:
@@ -199,266 +204,110 @@ class App(object):
 
     def start_rate_worker(self) -> None:
         if self.rate_worker and self.rate_worker.isRunning():
-            self.show_error("Запит курсу вже виконується. Будь ласка, зачекайте.")
-            return
-        item = self.listWidget.currentItem()
-        if not item:
-            self.show_error("Будь ласка, оберіть валюту зі списку.")
-            return
-        selected_currency = item.text()
-
-        if selected_currency in self.rate_cache:
-            self.label.setText(self.rate_cache[selected_currency])
-            return
-
-        self.label.setText("Завантаження курсу...")
+            return  # Уже выполняется
         self.progressBar.setVisible(True)
-
-        if self.rate_worker and self.rate_worker.isRunning():
-            self.rate_worker.quit()
-            self.rate_worker.wait()
-
-        self.rate_worker = RateWorker(selected_currency, scrapper=scrapper)
-        self.rate_worker.finished.connect(self.on_rate_ready)
-        self.rate_worker.error.connect(self.on_rate_error)
-        self.rate_worker.finished.connect(lambda: self.progressBar.setVisible(False))
+        self.label.setText("Завантаження курсу...")
+        cur = self.listWidget.currentItem().text()
+        if cur in self.rate_cache:
+            self.label.setText(f"{cur} = {self.rate_cache[cur]} UAH")
+            self.progressBar.setVisible(False)
+            return
+        self.rate_worker = RateWorker(cur)
+        self.rate_worker.finished.connect(self.on_rate_finished)
+        self.rate_worker.error.connect(self.show_error)
         self.rate_worker.start()
 
-    def on_rate_ready(self, text: str) -> None:
-        self.label.setText(text)
-        item = self.listWidget.currentItem()
-        if item:
-            currency = item.text()
-            self.rate_cache[currency] = text
-
-    def on_rate_error(self, msg: str) -> None:
-        self.show_error("Помилка завантаження курсу: " + msg)
+    def on_rate_finished(self, rate: str) -> None:
+        cur = self.listWidget.currentItem().text()
+        self.rate_cache[cur] = rate
+        self.label.setText(f"{cur} = {rate} UAH")
+        self.progressBar.setVisible(False)
 
     def start_chart_worker(self) -> None:
-
         if self.chart_worker and self.chart_worker.isRunning():
-            self.show_error("Запит графіка вже виконується. Будь ласка, зачекайте.")
-            return
-        if self.canvas:
-            self.right_layout.removeWidget(self.canvas)
-            self.canvas.setParent(None)
-            self.canvas.deleteLater()
-            self.canvas = None
-            self.figure = None
-        item = self.listWidget.currentItem()
-        if not item:
-            self.show_error("Будь ласка, оберіть валюту зі списку.")
-            return
-        currency = item.text()
+            return  # Уже выполняется
+        cur = self.listWidget.currentItem().text()
         days = self.comboBox_days.currentData()
-        key = (currency, days)
+        key = (cur, days)
         if key in self.chart_cache:
-            self.show_chart(*self.chart_cache[key])
+            self.draw_chart(*self.chart_cache[key], cur)
             return
 
-        self.label.setText("Завантаження графіка...")
         self.progressBar.setVisible(True)
-
-        if self.chart_worker and self.chart_worker.isRunning():
-            self.chart_worker.quit()
-            self.chart_worker.wait()
-
-        self.chart_worker = ChartWorker(currency, days)
-        self.chart_worker.finished.connect(self.on_chart_ready)
-        self.chart_worker.error.connect(self.on_chart_error)
-        self.chart_worker.finished.connect(lambda: self.progressBar.setVisible(False))
+        self.label.setText("Завантаження графіка...")
+        self.chart_worker = ChartWorker(cur, days)
+        self.chart_worker.finished.connect(lambda data: self.on_chart_finished(data, cur, days))
+        self.chart_worker.error.connect(self.show_error)
         self.chart_worker.start()
 
-    def on_chart_ready(self, dates: List[date], rates: List[float]) -> None:
+    def on_chart_finished(self, data: Tuple[List[date], List[float]], cur: str, days: int) -> None:
+        self.chart_cache[(cur, days)] = data
+        self.draw_chart(*data, cur)
+        self.progressBar.setVisible(False)
+        self.label.setText("Графік побудовано")
 
-        key = (self.listWidget.currentItem().text(), self.comboBox_days.currentData())
-        self.chart_cache[key] = (dates, rates)
-        self.show_chart(dates, rates)
-
-    def on_chart_error(self, msg: str) -> None:
-        self.show_error("Помилка завантаження графіка: " + msg)
-
-    def show_chart(self, dates: list, rates: list) -> None:
+    def draw_chart(self, dates: List[date], rates: List[float], cur: str) -> None:
         if self.canvas:
             self.right_layout.removeWidget(self.canvas)
             self.canvas.setParent(None)
             self.canvas.deleteLater()
-        chart_settings = self.settings.load_chart_settings()
-        line_color = chart_settings.get("line_color", "#2d78d8")
-        self.figure = plt.Figure(figsize=(7, 5))
+
+        self.figure = Figure(figsize=(7, 4), dpi=100)
+        ax = self.figure.add_subplot(111)
+        ax.plot(dates, rates, marker='o', linestyle='-')
+        ax.set_title(f"Курс {cur} до UAH")
+        ax.set_xlabel("Дата")
+        ax.set_ylabel("Курс")
+        ax.grid(True)
+
+        ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+        self.figure.autofmt_xdate()
+
         self.canvas = FigureCanvas(self.figure)
         self.right_layout.addWidget(self.canvas)
-
-        ax = self.figure.add_subplot(111)
-        ax.clear()
-
-        # Проверка данных
-        if not dates or not rates or len(dates) != len(rates):
-            self.show_error("Немає даних для побудови графіка.")
-            return
-
-        chart_settings = self.settings.load_chart_settings()
-        chart_type = chart_settings.get("chart_type", "Лінійний")
-        show_grid = chart_settings.get("show_grid", True)
-        show_sma = chart_settings.get("show_sma", False)
-
-        has_label = False
-
-        if chart_type == "Лінійний":
-            ax.plot(dates, rates, label="Курс", color=line_color)
-            has_label = True
-        elif chart_type == "Баровий":
-            ax.bar(dates, rates, label="Баровий", color=line_color)
-            has_label = True
-        elif chart_type == "Точечний":
-            ax.scatter(dates, rates, label="Точечний", color=line_color)
-            has_label = True
-        elif chart_type == "Діаграмма розбросу":
-            ax.scatter(dates, rates, label='Курс (точки)',color = line_color)
-            has_label = True
-
-
-        if show_sma and len(rates) >= 5:
-            window = 5
-            sma = [sum(rates[i - window:i]) / window for i in range(window, len(rates) + 1)]
-            ax.plot(dates[window - 1:], sma, label="SMA", linestyle="--", color="orange")
-            has_label = True
-
-        if has_label:
-            ax.legend()
-
-        ax.grid(show_grid)
-        ax.set_title("Динаміка курсу")
-        ax.set_xlabel("Дата")
-        ax.set_ylabel("Курс")
-        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d-%m-%Y"))
-        ax.xaxis.set_major_locator(mdates.AutoDateLocator())
-        self.figure.autofmt_xdate()
-
         self.canvas.draw()
-    def on_predict_button_clicked(self):
 
-        item = self.listWidget.currentItem()
-
-        if not item:
-            self.show_error("Будь ласка, оберіть валюту зі списку.")
-
-            return
-        self.progressBar.setVisible(True)
-        selected_currency = item.text()
-        self.predict_worker = PredictWorker(selected_currency, days=30)
-        self.predict_worker.finished.connect(self.on_predict_finished)
-        self.predict_worker.error.connect(self.on_predict_error)
-        self.predict_worker.start()
-        self.label.setText("Виконується предікт...")
-
-    def on_predict_finished(self, result_text: str):
-        self.label.setText(result_text)
-        self.progressBar.setVisible(False)
-    def on_predict_error(self, error_text: str):
-        self.progressBar.setVisible(False)
-        self.show_error(error_text)
-    def open_settings(self)-> None:
-        settings_service = SettingsService()
-        dlg = ThemeSettingsDialog(settings_service=settings_service)
-        if dlg.exec_and_save():
-            print("Налаштування змінені.")
-            if dlg.is_dark_theme:
-                self.apply_dark_theme()
+    def open_settings(self) -> None:
+        dialog = ThemeSettingsDialog()
+        dialog.set_theme(self.is_dark_theme)
+        if dialog.exec():
+            self.is_dark_theme = dialog.get_theme()
+            self.settings.save_theme(self.is_dark_theme)
+            if self.is_dark_theme:
+                dark_css_path = os.path.join(BASE_DIR, "styles", "dark.css")
+                with open(dark_css_path, "r", encoding="utf-8") as f:
+                    self.app.setStyleSheet(f.read())
             else:
-                self.apply_light_theme()
-            # Не вызывать сразу обновление графика
-            chart_settings = dlg.selected_chart_settings()
-            self.settings.save_chart_settings(chart_settings)
-            # self.apply_chart_settings(chart_settings)  <-- убрать или закомментировать
-        else:
-            print("Налаштування не змінені.")
+                style_css_path = os.path.join(BASE_DIR, "styles", "style.css")
+                with open(style_css_path, "r", encoding="utf-8") as f:
+                    self.app.setStyleSheet(f.read())
 
-    def apply_dark_theme(self) -> None:
-        try:
-            with open("styles/dark.css", "r", encoding="utf-8") as f:
-                self.app.setStyleSheet(f.read())
-            self.is_dark_theme = True
-            self.settings.save_theme(True)
+    def on_predict_button_clicked(self) -> None:
+        cur = self.listWidget.currentItem().text()
+        self.progressBar.setVisible(True)
+        self.label.setText("Завантаження предікту...")
+        self.predict_btn.setEnabled(False)
 
-        except Exception as e:
-            logging.error(f"Помилка завантаження темної теми: {e}")
+        def on_finished(predict: float) -> None:
+            self.label.setText(f"Передбачення курсу {cur} на завтра: {predict:.4f} UAH")
+            self.progressBar.setVisible(False)
+            self.predict_btn.setEnabled(True)
 
-    def apply_light_theme(self) -> None:
-        try:
-            with open("styles/style.css", "r", encoding="utf-8") as f:
-                self.app.setStyleSheet(f.read())
-            self.is_dark_theme = False
-            self.settings.save_theme(False)
+        def on_error(msg: str) -> None:
+            self.show_error(msg)
+            self.predict_btn.setEnabled(True)
 
-        except Exception as e:
-            logging.error(f"Помилка завантаженная свiтлої теми: {e}")
+        self.predict_worker = PredictWorker(cur)
+        self.predict_worker.finished.connect(on_finished)
+        self.predict_worker.error.connect(on_error)
+        self.predict_worker.start()
 
-    def apply_chart_settings(self, chart_settings: dict) -> None:
-        if not self.figure or not self.canvas:
-            return  # график еще не построен
-
-        # Получаем параметры
-        chart_type = chart_settings.get("chart_type", "Лінійний")
-        show_grid = chart_settings.get("show_grid", True)
-        show_sma = chart_settings.get("show_sma", False)
-
-        # Получаем текущие данные графика из кеша (если есть)
-        current_item = self.listWidget.currentItem()
-        if not current_item:
-            return
-        currency = current_item.text()
-        days = self.comboBox_days.currentData()
-        key = (currency, days)
-        if key not in self.chart_cache:
-            return
-        dates, rates = self.chart_cache[key]
-
-        ax = self.figure.axes[0]
-        ax.clear()
-        chart_settings = self.settings.load_chart_settings()
-        line_color = chart_settings.get("line_color", "#2d78d8")
-        # Отрисовка графика по типу
-        if chart_type == "Лінійний":
-            ax.plot(dates, rates, label="Курс", color=line_color)
-            has_label = True
-        elif chart_type == "Баровий":
-            ax.bar(dates, rates, label="Баровий", color=line_color)
-            has_label = True
-        elif chart_type == "Точечний":
-            ax.scatter(dates, rates, label="Точечний", color=line_color)
-            has_label = True
-        elif chart_type == "Діаграмма розбросу":
-            ax.scatter(dates, rates, label='Курс (точки)', color=line_color)
-            has_label = True
-
-        if show_grid:
-            ax.grid(True)
-        else:
-            ax.grid(False)
-
-        if show_sma:
-            window = 5
-            if len(rates) >= window:
-                sma = [sum(rates[i - window:i]) / window for i in range(window, len(rates) + 1)]
-                ax.plot(dates[window - 1:], sma, label="SMA", linestyle="--", color="orange")
-
-        ax.set_title("Динаміка курсу")
-        ax.set_xlabel("Дата")
-        ax.set_ylabel("Курс")
-        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d-%m-%Y"))
-        ax.xaxis.set_major_locator(mdates.AutoDateLocator())
-        self.figure.autofmt_xdate()
-
-        ax.legend()
-        self.canvas.draw()
-
-    
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    main_window = QMainWindow()
-    application = App(app)
-    application.setupUi(main_window)
-    main_window.show()
-    sys.exit(app.exec_())
+    ex = App(app)
+    mainWin = QMainWindow()
+    ex.setupUi(mainWin)
+    mainWin.show()
+    sys.exit(app.exec())

@@ -1,7 +1,8 @@
 import json
 import os
 
-CONFIG_PATH = "cfgs/config.json"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_PATH = os.path.join(BASE_DIR, "cfgs", "config.json")
 
 
 def load_config() -> dict:
