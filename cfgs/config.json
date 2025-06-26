@@ -1,9 +1,0 @@
-{
-    "is_dark_theme": true,
-    "chart_settings": {
-        "chart_type": "Лінійний",
-        "show_grid": true,
-        "show_sma": false,
-        "line_color": "#2d78d8"
-    }
-}
