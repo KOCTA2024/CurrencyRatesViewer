@@ -55,8 +55,3 @@ requests
 
 scikit-learn
 
-📬 Contact
-Feel free to reach out for suggestions, feedback, or contributions:
-
-Telegram: @llxldxl
-
